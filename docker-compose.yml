@@ -1,0 +1,61 @@
+# Full local stack: Postgres + Redis + API
+# On AWS: swap postgres/redis for RDS + ElastiCache; run only the app on EC2/ECS.
+#
+# IMPORTANT: when the API runs *inside* Docker, use hostnames "postgres" and "redis"
+# (Compose service names). "localhost" only works when the API runs on your machine.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: appointment_postgres
+    environment:
+      POSTGRES_USER: booking_user
+      POSTGRES_PASSWORD: booking_pass
+      POSTGRES_DB: appointment_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user -d appointment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: appointment_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    command: ["redis-server", "--appendonly", "yes"]
+
+  api:
+    build: .
+    container_name: appointment_api
+    ports:
+      - "8000:8000"
+    environment:
+      # Inside Docker network — NOT localhost
+      DATABASE_URL: postgresql://booking_user:booking_pass@postgres:5432/appointment_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: change-me-to-a-long-random-secret-in-production
+      APP_ENV: development
+      DEBUG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Single worker locally so APScheduler + WS subscriber stay simple
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  postgres_data:
+  redis_data:
